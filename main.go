@@ -1,51 +1,108 @@
 package main
 
 import (
-	"fmt"
 	"log"
 	"net/http"
 
-	socketio "github.com/googollee/go-socket.io"
+	"github.com/gorilla/websocket"
 )
 
+// socketReader struct
+type socketReader struct {
+	conn *websocket.Conn
+	name string
+}
+
+var socketreader []*socketReader
+
+func handler(w http.ResponseWriter, r *http.Request) {
+	if socketreader == nil {
+		socketreader = make([]*socketReader, 0)
+	}
+
+	defer func() {
+		err := recover()
+		if err != nil {
+			log.Println("[ERR] ", err)
+		}
+		r.Body.Close()
+	}()
+
+	// Upgrader upgrades the http connection to a websocket connection
+	var upgrader = websocket.Upgrader{
+		ReadBufferSize:  2048,
+		WriteBufferSize: 2048,
+	}
+
+	upgrader.CheckOrigin = func(r *http.Request) bool { return true }
+
+	// Upgrade connection
+	con, err := upgrader.Upgrade(w, r, nil)
+	if err != nil {
+		log.Println("[ERR] ", err)
+	}
+
+	// Socket Reader
+	ptrSocketReader := &socketReader{
+		conn: con,
+		name: "",
+	}
+
+	socketreader = append(socketreader, ptrSocketReader)
+
+	// Start a new thread
+	ptrSocketReader.startThread()
+}
+
+func (i *socketReader) broadcast(str string) {
+	for _, g := range socketreader {
+		g.writeMsg(i.name, str)
+	}
+}
+
+func (i *socketReader) read() {
+	_, b, er := i.conn.ReadMessage()
+	if er != nil {
+		panic(er)
+	}
+	i.broadcast(string(b))
+
+	log.Println("[MESSAGE] " + i.name + " [SAYS] " + string(b))
+}
+
+func (i *socketReader) writeMsg(name string, str string) {
+	i.conn.WriteMessage(websocket.TextMessage, []byte(name+str))
+}
+
+func (i *socketReader) startThread() {
+
+	go func() {
+		defer func() {
+			err := recover()
+			if err != nil {
+				log.Println(err)
+			}
+		}()
+
+		for {
+			if i.name == "" {
+				_, b, err := i.conn.ReadMessage()
+				if err != nil {
+					log.Println("[ERR]", err)
+				}
+				i.name = string(b)
+				log.Println("[JOINED]", i.name)
+			} else {
+				i.read()
+			}
+		}
+	}()
+}
+
 func main() {
-	const port = 3001
 
-	server, err := socketio.NewServer(nil)
-	if err != nil {
-		log.Fatal("[ERROR]: ", err)
-	}
+	h := http.NewServeMux()
+	h.HandleFunc("/", handler)
 
-	server.OnConnect("/", func(s socketio.Conn) error {
-		s.SetContext("")
-		fmt.Println("[CONNECT]: ", s.ID())
-		return nil
-	})
-
-	server.OnEvent("/", "message", func(s socketio.Conn, msg string) string {
-		s.SetContext(msg)
-		return "[MESSAGE]: " + msg
-	})
-
-	server.OnError("/", func(s socketio.Conn, e error) {
-		fmt.Println("[ERROR]: ", e)
-	})
-
-	server.OnDisconnect("/", func(s socketio.Conn, reason string) {
-		fmt.Println("[DISCONNECT]: ", reason)
-	})
-
-	// Run as non-blocking thread
-	go server.Serve()
-	defer server.Close()
-
-	// Root path '/'
-	// The server handles on socket.io connections
-	http.Handle("/", server)
-
-	log.Println(fmt.Sprintf("[STARTUP] Serving at localhost:%d...", port))
-	err = http.ListenAndServe(fmt.Sprintf(":%d", port), nil)
-	if err != nil {
-		log.Fatal(http.ListenAndServe(fmt.Sprintf(":%d", port), nil))
-	}
+	http.ListenAndServe(":3001", h)
 }
