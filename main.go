@@ -65,13 +65,14 @@ func (i *socketReader) read() {
 	if er != nil {
 		panic(er)
 	}
+
 	i.broadcast(string(b))
 
 	log.Println("[MESSAGE] " + i.name + " [SAYS] " + string(b))
 }
 
 func (i *socketReader) writeMsg(name string, str string) {
-	i.conn.WriteMessage(websocket.TextMessage, []byte(name+str))
+	i.conn.WriteMessage(websocket.TextMessage, []byte(name+"--->"+str))
 }
 
 func (i *socketReader) startThread() {
@@ -80,7 +81,7 @@ func (i *socketReader) startThread() {
 		defer func() {
 			err := recover()
 			if err != nil {
-				log.Println(err)
+				log.Println("[ERR]", err)
 			}
 		}()
 
